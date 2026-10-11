@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"crypto-payment-gateway/internal/money"
+	"crypto-payment-gateway/internal/payment"
 )
 
 var (
@@ -29,6 +30,7 @@ type Invoice struct {
 	FeeBPS         int
 	Status         Status
 	CreatedAt      time.Time
+	Payment        *payment.Observation
 }
 
 // Repository creates the invoice, idempotency record and ledger accounts atomically.

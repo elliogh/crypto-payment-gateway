@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"crypto-payment-gateway/internal/chain"
 	"crypto-payment-gateway/internal/config"
 	"crypto-payment-gateway/internal/diagnostic"
 	"crypto-payment-gateway/internal/httpapi"
@@ -41,13 +42,25 @@ func Run(logger *slog.Logger) error {
 	if err := store.Seed(startup, cfg.AlphaKey, cfg.BetaKey); err != nil {
 		return diagnostic.Wrap("initialize_partners", err)
 	}
+	if err := store.InitializeChain(startup); err != nil {
+		return diagnostic.Wrap("initialize_chain", err)
+	}
+	scanner := chain.Scanner{Source: store, Deposits: store}
 	cancel()
+	stopScanner := startScanner(ctx, scanner, logger)
+	defer stopScanner()
 
-	handler := httpapi.New(httpapi.Dependencies{
-		Partners: store,
-		Invoices: store,
-		Balances: store,
-		Ready:    store.Ready,
-	}, logger)
+	deps := httpapi.Dependencies{
+		Partners:      store,
+		Invoices:      store,
+		Balances:      store,
+		Ready:         store.Ready,
+		Confirmations: cfg.Confirmations,
+	}
+	if cfg.LocalMocks {
+		deps.Simulator = store
+		deps.MockControlKey = cfg.MockControlKey
+	}
+	handler := httpapi.New(deps, logger)
 	return diagnostic.Wrap("serve_http", serve(ctx, cfg.HTTPAddr, handler, logger))
 }

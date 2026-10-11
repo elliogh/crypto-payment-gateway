@@ -6,16 +6,20 @@ import (
 	"net/http"
 	"time"
 
+	"crypto-payment-gateway/internal/chain"
 	"crypto-payment-gateway/internal/invoice"
 	"crypto-payment-gateway/internal/ledger"
 	"crypto-payment-gateway/internal/partner"
 )
 
 type Dependencies struct {
-	Partners partner.Authenticator
-	Invoices invoice.Repository
-	Balances ledger.BalanceReader
-	Ready    func(context.Context) error
+	Partners       partner.Authenticator
+	Invoices       invoice.Repository
+	Balances       ledger.BalanceReader
+	Ready          func(context.Context) error
+	Simulator      chain.Simulator
+	MockControlKey string
+	Confirmations  int
 }
 
 type api struct {
@@ -31,6 +35,11 @@ func New(deps Dependencies, logger *slog.Logger) http.Handler {
 	mux.Handle("POST /invoices", api.authorize(http.HandlerFunc(api.createInvoice)))
 	mux.Handle("GET /invoices/{id}", api.authorize(http.HandlerFunc(api.getInvoice)))
 	mux.Handle("GET /balance", api.authorize(http.HandlerFunc(api.balance)))
+	if deps.Simulator != nil && partner.ValidAPIKey(deps.MockControlKey) {
+		mux.Handle("POST /mock/transfers", api.authorizeMock(http.HandlerFunc(api.addTransfer)))
+		mux.Handle("POST /mock/advance", api.authorizeMock(http.HandlerFunc(api.advanceChain)))
+		mux.Handle("POST /mock/reorg", api.authorizeMock(http.HandlerFunc(api.reorgChain)))
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "not_found", "route not found")
 	})

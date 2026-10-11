@@ -21,15 +21,23 @@ type createInvoiceRequest struct {
 }
 
 type invoiceResponse struct {
-	ID             string    `json:"id"`
-	Amount         string    `json:"amount"`
-	Currency       string    `json:"currency"`
-	DepositAddress string    `json:"deposit_address"`
-	FeeBPS         int       `json:"fee_bps"`
-	Status         string    `json:"status"`
-	PaymentStatus  *string   `json:"payment_status"`
-	RefundStatus   *string   `json:"refund_status"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string           `json:"id"`
+	Amount         string           `json:"amount"`
+	Currency       string           `json:"currency"`
+	DepositAddress string           `json:"deposit_address"`
+	FeeBPS         int              `json:"fee_bps"`
+	Status         string           `json:"status"`
+	PaymentStatus  *string          `json:"payment_status"`
+	RefundStatus   *string          `json:"refund_status"`
+	CreatedAt      time.Time        `json:"created_at"`
+	Payment        *paymentResponse `json:"payment,omitempty"`
+}
+
+type paymentResponse struct {
+	ID                 string `json:"id"`
+	ObservationVersion int64  `json:"observation_version"`
+	Confirmations      int64  `json:"confirmations"`
+	ReadyForAML        bool   `json:"ready_for_aml"`
 }
 
 func toInvoiceResponse(found invoice.Invoice) invoiceResponse {
@@ -103,5 +111,14 @@ func (a *api) getInvoice(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, "get_invoice", err)
 		return
 	}
-	reply(w, http.StatusOK, toInvoiceResponse(found))
+	response := toInvoiceResponse(found)
+	if found.Payment != nil {
+		status := string(found.Payment.Status)
+		response.PaymentStatus = &status
+		response.Payment = &paymentResponse{
+			ID: found.Payment.ID, ObservationVersion: found.Payment.Version, Confirmations: found.Payment.Confirmations,
+			ReadyForAML: a.Confirmations > 0 && found.Payment.Confirmations >= int64(a.Confirmations) && status == "CONFIRMING",
+		}
+	}
+	reply(w, http.StatusOK, response)
 }

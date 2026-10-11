@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"crypto-payment-gateway/internal/chain"
 	"crypto-payment-gateway/internal/invoice"
 	"crypto-payment-gateway/internal/ledger"
 	"crypto-payment-gateway/internal/money"
+	"crypto-payment-gateway/internal/payment"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -112,15 +114,31 @@ func replayInvoice(ctx context.Context, tx pgx.Tx, partnerID, key string, amount
 
 func (s *Store) GetInvoice(ctx context.Context, partnerID, id string) (invoice.Invoice, error) {
 	const query = `
-		SELECT ` + invoiceColumns + `
+		SELECT ` + invoiceColumns + `,p.id::text,p.status,p.observation_version,
+		coalesce(head.height,0),coalesce(block.height,0),coalesce(o.canonical AND block.canonical,false)
 		FROM invoices i
+		LEFT JOIN payments p ON p.invoice_id=i.id
+		LEFT JOIN payment_observations o ON o.payment_id=p.id AND o.version=p.observation_version
+		LEFT JOIN chain_blocks block ON block.hash=o.block_hash
+		LEFT JOIN chain_state c ON c.chain_id=1
+		LEFT JOIN chain_blocks head ON head.hash=c.head_hash
 		WHERE i.id = $1 AND i.partner_id = $2`
-	found, err := scanInvoice(s.pool.QueryRow(ctx, query, id, partnerID))
+	var found invoice.Invoice
+	var paymentID, status *string
+	var version *int64
+	var head, height int64
+	var canonical bool
+	err := s.pool.QueryRow(ctx, query, id, partnerID).Scan(
+		&found.ID, &found.Amount, &found.Currency, &found.DepositAddress, &found.FeeBPS, &found.Status, &found.CreatedAt,
+		&paymentID, &status, &version, &head, &height, &canonical)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return invoice.Invoice{}, invoice.ErrNotFound
 	}
 	if err != nil {
 		return invoice.Invoice{}, fmt.Errorf("read invoice: %w", err)
+	}
+	if paymentID != nil {
+		found.Payment = &payment.Observation{ID: *paymentID, Status: payment.Status(*status), Version: *version, Confirmations: chain.Confirmations(head, height, canonical)}
 	}
 	return found, nil
 }

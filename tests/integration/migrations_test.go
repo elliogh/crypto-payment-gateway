@@ -6,6 +6,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"crypto-payment-gateway/internal/chain"
 	"crypto-payment-gateway/internal/ledger"
 	"crypto-payment-gateway/internal/postgres"
 	"crypto-payment-gateway/migrations"
@@ -13,7 +14,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const currentMigrationVersion = 2
+const currentMigrationVersion = 3
 
 func TestMigrationsRoundTrip(t *testing.T) {
 	pool := databasePool(t)
@@ -40,6 +41,11 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		if err != nil || hasInvoices != foundation || hasRefunds != processing {
 			t.Fatalf("schema state = (%v, %v): %v", hasInvoices, hasRefunds, err)
 		}
+		var hasSignature bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name='chain_events' AND column_name='topic0')`).Scan(&hasSignature); err != nil || hasSignature != (version >= 3) {
+			t.Fatalf("event signature at version %d = %v: %v", version, hasSignature, err)
+		}
 		var triggers, functions, sealedColumns int
 		err = pool.QueryRow(ctx, `SELECT
 			(SELECT count(*) FROM pg_trigger t
@@ -56,7 +62,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		}
 	}
 	assertState(currentMigrationVersion, true, true)
-	for _, version := range []int64{2, 1} {
+	for _, version := range []int64{3, 2, 1} {
 		result, err := provider.Down(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -73,6 +79,34 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	results, err := provider.Up(ctx)
 	if err != nil || len(results) != 0 {
 		t.Fatalf("repeated Up applied %d migrations: %v", len(results), err)
+	}
+}
+
+func TestEventSignatureMigrationPreservesExistingChain(t *testing.T) {
+	pool := databasePool(t)
+	ctx := context.Background()
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.UpTo(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO chain_blocks(hash,height,timestamp,canonical) VALUES('old-block',0,now(),true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO chain_events(block_hash,tx_hash,tx_event_index,log_index,sender,recipient,token_contract,raw_amount,receipt_success)
+		VALUES('old-block','old-tx',0,0,'sender','recipient',$1,100000000,true)`, chain.USDTContract); err != nil {
+		t.Fatal(err)
+	}
+	if err = postgres.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	var topic, amount string
+	if err = pool.QueryRow(ctx, `SELECT topic0,raw_amount::text FROM chain_events WHERE tx_hash='old-tx'`).Scan(&topic, &amount); err != nil || topic != chain.TransferTopic || amount != "100000000" {
+		t.Fatal(topic, amount, err)
 	}
 }
 
@@ -95,12 +129,12 @@ func TestMigrationsConcurrent(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	var first, second int
+	var first, second, third int
 	err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE version_id=1),
-		count(*) FILTER (WHERE version_id=2)
-		FROM goose_db_version WHERE version_id > 0 AND is_applied`).Scan(&first, &second)
-	if err != nil || first != 1 || second != 1 {
-		t.Fatalf("applied versions counts = (%d, %d): %v", first, second, err)
+		count(*) FILTER (WHERE version_id=2),count(*) FILTER (WHERE version_id=3)
+		FROM goose_db_version WHERE version_id > 0 AND is_applied`).Scan(&first, &second, &third)
+	if err != nil || first != 1 || second != 1 || third != 1 {
+		t.Fatalf("applied versions counts = (%d, %d, %d): %v", first, second, third, err)
 	}
 	var legacy bool
 	if err := pool.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&legacy); err != nil || legacy {

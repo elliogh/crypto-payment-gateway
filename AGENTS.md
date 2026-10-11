@@ -5,8 +5,8 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 ## Current State and Boundaries
 
 - Part 1 is complete: `DESIGN.md` and `output/pdf/usdt-payment-design.pdf`. Modify them when the task explicitly concerns the design.
-- Only stage 1 of Part 2 is implemented: startup, PostgreSQL, the monetary model, ledger, partners, invoices, and API. The simulator, AML, workers, and payment processing are not implemented yet. Their schema and configuration are intentionally prepared in advance.
-- Start stages 2–4 when instructed by the user. Implement the assignment's simplified flow; the production architecture in the design does not require implementing every component. Outbox and webhooks are outside the current Part 2 flow.
+- Stages 1–2 of Part 2 are implemented: startup, PostgreSQL, the monetary model, ledger, partners, invoices, API, the Ethereum simulator, and the background scanner. AML workers, settlement, and refunds are not implemented yet; their schema and configuration are intentionally prepared in advance.
+- Start stages 3–4 when instructed by the user. Implement the assignment's simplified flow; the production architecture in the design does not require implementing every component. Outbox and webhooks are outside the current Part 2 flow.
 
 ## Documents to Read
 
@@ -18,6 +18,8 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 ## Structure and Change Style
 
 - Domain rules belong in `partner`, `invoice`, `ledger`, and `money`; HTTP uses its own DTOs; the PostgreSQL adapter owns SQL and transactions. Startup and dependency wiring belong in `app`, with the entry point in `cmd/gateway`.
+- `chain` owns simulator/source interfaces, USDT event validation, and scanning; `payment` describes the current observation. Simulator commands change only blocks/events and the source cursor. The scanner owns invoice matching, persistent transfer bindings, and observation versions; it reconciles rollbacks even with no new blocks. GET confirmations also check block canonicality.
+- Lock `chain_state` first, then invoices and payments in UUID order, before ledger accounts. Read the head in a fresh statement after acquiring the chain lock. Apply batches only when both the chain version and starting cursor match; record payments and cursor atomically. Stage 3 must coordinate local reorg commands with financial decisions under these locks before enabling financial processing.
 - Keep interfaces small and focused on complete operations. Prefer targeted changes; introduce a shared package or wrapper when it hides real rules or complexity rather than merely renaming a library.
 - Generate UUID v4 values with `github.com/google/uuid.NewRandom()` and handle errors. The custom `identity` package has been removed. HTTP accepts the standard 36-character UUID form in either case; the ledger requires canonical lowercase.
 - Errors preserve their causes for `errors.Is/As`. Diagnostics expose the operation, error type, and SQLSTATE; SQL error messages, parameters, keys, and connection URLs must stay out of logs and HTTP responses.
@@ -36,7 +38,7 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 
 ## Migrations and Data
 
-- Goose SQL files live in the root `migrations/` directory, are embedded in the binary, and are applied before the API starts. The current history consists of 001 and 002; add new migrations for future changes.
+- Goose SQL files live in the root `migrations/` directory, are embedded in the binary, and are applied before the API starts. The current history consists of 001–003; add new migrations for future changes.
 - Custom triggers, trigger functions, and `sealed` have been removed. Go enforces financial rules; the database retains PK, FK, UNIQUE, NOT NULL, and CHECK constraints. Direct administrative SQL can bypass Go rules; this is an accepted limitation, and no additional database roles have been introduced.
 - Preserve the Docker volume and existing data during normal updates. A previously approved cleanup of the demo database does not authorize another reset.
 
