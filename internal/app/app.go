@@ -8,11 +8,14 @@ import (
 	"syscall"
 	"time"
 
+	"crypto-payment-gateway/internal/aml"
 	"crypto-payment-gateway/internal/chain"
 	"crypto-payment-gateway/internal/config"
 	"crypto-payment-gateway/internal/diagnostic"
 	"crypto-payment-gateway/internal/httpapi"
+	"crypto-payment-gateway/internal/payment"
 	"crypto-payment-gateway/internal/postgres"
+	"crypto-payment-gateway/internal/refund"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,6 +52,12 @@ func Run(logger *slog.Logger) error {
 	cancel()
 	stopScanner := startScanner(ctx, scanner, logger)
 	defer stopScanner()
+	provider := aml.NewMock(cfg.AMLBlacklist, cfg.AMLUnavailable)
+	worker := payment.Worker{Store: store, Provider: provider, Confirmations: cfg.Confirmations,
+		RetryInterval: cfg.AMLRetryInterval, Lease: 30 * time.Second,
+		RefundPolicy: refund.Policy{Enabled: cfg.RefundsEnabled, UnsafeSenders: cfg.RefundUnsafeSenders}}
+	stopWorker := startPaymentWorker(ctx, worker, logger)
+	defer stopWorker()
 
 	deps := httpapi.Dependencies{
 		Partners:      store,
@@ -60,6 +69,8 @@ func Run(logger *slog.Logger) error {
 	if cfg.LocalMocks {
 		deps.Simulator = store
 		deps.MockControlKey = cfg.MockControlKey
+		deps.AMLControl = provider
+		deps.Refunds = store
 	}
 	handler := httpapi.New(deps, logger)
 	return diagnostic.Wrap("serve_http", serve(ctx, cfg.HTTPAddr, handler, logger))

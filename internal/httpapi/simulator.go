@@ -90,7 +90,7 @@ func (a *api) simulatorError(w http.ResponseWriter, err error) {
 	case errors.Is(err, chain.ErrInvalid):
 		fail(w, http.StatusBadRequest, "invalid_simulation", "invalid simulator input")
 	case errors.Is(err, chain.ErrConflict):
-		fail(w, http.StatusConflict, "simulation_conflict", "transfer identifier already has different data")
+		fail(w, http.StatusConflict, "simulation_conflict", "operation conflicts with transfer data or a final payment decision")
 	default:
 		a.internalError(w, "simulate_chain", err)
 	}

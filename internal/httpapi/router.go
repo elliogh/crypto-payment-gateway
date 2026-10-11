@@ -10,6 +10,7 @@ import (
 	"crypto-payment-gateway/internal/invoice"
 	"crypto-payment-gateway/internal/ledger"
 	"crypto-payment-gateway/internal/partner"
+	"crypto-payment-gateway/internal/refund"
 )
 
 type Dependencies struct {
@@ -20,6 +21,8 @@ type Dependencies struct {
 	Simulator      chain.Simulator
 	MockControlKey string
 	Confirmations  int
+	AMLControl     interface{ SetUnavailable(bool) }
+	Refunds        refund.Approver
 }
 
 type api struct {
@@ -39,6 +42,12 @@ func New(deps Dependencies, logger *slog.Logger) http.Handler {
 		mux.Handle("POST /mock/transfers", api.authorizeMock(http.HandlerFunc(api.addTransfer)))
 		mux.Handle("POST /mock/advance", api.authorizeMock(http.HandlerFunc(api.advanceChain)))
 		mux.Handle("POST /mock/reorg", api.authorizeMock(http.HandlerFunc(api.reorgChain)))
+		if deps.AMLControl != nil {
+			mux.Handle("POST /mock/aml", api.authorizeMock(http.HandlerFunc(api.setAMLAvailability)))
+		}
+		if deps.Refunds != nil {
+			mux.Handle("POST /mock/refunds/{id}/approve", api.authorizeMock(http.HandlerFunc(api.approveRefund)))
+		}
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "not_found", "route not found")

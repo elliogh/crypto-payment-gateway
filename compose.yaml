@@ -30,6 +30,10 @@ services:
       LOCAL_MOCKS: ${LOCAL_MOCKS:-true}
       MOCK_CONTROL_KEY: ${MOCK_CONTROL_KEY:-local-control-key}
       AML_RETRY_INTERVAL: ${AML_RETRY_INTERVAL:-5s}
+      AML_BLACKLIST: ${AML_BLACKLIST:-0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+      AML_UNAVAILABLE: ${AML_UNAVAILABLE:-false}
+      REFUNDS_ENABLED: ${REFUNDS_ENABLED:-true}
+      REFUND_UNSAFE_SENDERS: ${REFUND_UNSAFE_SENDERS:-}
       PARTNER_ALPHA_KEY: ${PARTNER_ALPHA_KEY:-local-alpha-key}
       PARTNER_BETA_KEY: ${PARTNER_BETA_KEY:-local-beta-key}
     depends_on:

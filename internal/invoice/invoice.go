@@ -7,6 +7,7 @@ import (
 
 	"crypto-payment-gateway/internal/money"
 	"crypto-payment-gateway/internal/payment"
+	"crypto-payment-gateway/internal/refund"
 )
 
 var (
@@ -31,6 +32,7 @@ type Invoice struct {
 	Status         Status
 	CreatedAt      time.Time
 	Payment        *payment.Observation
+	Refund         *refund.Refund
 }
 
 // Repository creates the invoice, idempotency record and ledger accounts atomically.

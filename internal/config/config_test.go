@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -19,6 +20,9 @@ func validEnvironment(t *testing.T) {
 	t.Setenv("LOCAL_MOCKS", "true")
 	t.Setenv("CONFIRMATIONS", "3")
 	t.Setenv("AML_RETRY_INTERVAL", "5s")
+	for _, name := range []string{"AML_BLACKLIST", "REFUND_UNSAFE_SENDERS", "AML_UNAVAILABLE", "REFUNDS_ENABLED"} {
+		t.Setenv(name, "")
+	}
 }
 
 func TestLoad(t *testing.T) {
@@ -33,6 +37,14 @@ func TestLoad(t *testing.T) {
 		{name: "CONFIRMATIONS", value: "0"},
 		{name: "CONFIRMATIONS", value: "abc"},
 		{name: "AML_RETRY_INTERVAL", value: "0s"},
+		{name: "AML_RETRY_INTERVAL", value: "1ns"},
+		{name: "AML_RETRY_INTERVAL", value: "1us"},
+		{name: "AML_RETRY_INTERVAL", value: "999ms"},
+		{name: "AML_RETRY_INTERVAL", value: "-1s"},
+		{name: "AML_BLACKLIST", value: "not-an-address"},
+		{name: "REFUND_UNSAFE_SENDERS", value: "0xabc"},
+		{name: "AML_UNAVAILABLE", value: "maybe"},
+		{name: "REFUNDS_ENABLED", value: "maybe"},
 		{name: "LOCAL_MOCKS", value: "yes"},
 		{name: "DATABASE_URL", value: ""},
 		{name: "PARTNER_BETA_KEY", value: "local-alpha-key"},
@@ -50,6 +62,20 @@ func TestLoad(t *testing.T) {
 			t.Setenv(tc.name, tc.value)
 			if _, err := Load(); err == nil {
 				t.Fatal("invalid config accepted")
+			}
+		})
+	}
+}
+
+func TestLoadAMLRetryIntervalBoundary(t *testing.T) {
+	for _, value := range []string{"1s", "1.5s", "1m"} {
+		t.Run(value, func(t *testing.T) {
+			validEnvironment(t)
+			t.Setenv("AML_RETRY_INTERVAL", value)
+			cfg, err := Load()
+			want, _ := time.ParseDuration(value)
+			if err != nil || cfg.AMLRetryInterval != want {
+				t.Fatal("supported retry interval rejected or changed", cfg.AMLRetryInterval, err)
 			}
 		})
 	}

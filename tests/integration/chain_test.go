@@ -436,15 +436,11 @@ func TestChainScanAndReorgRollbackAtomically(t *testing.T) {
 	if _, err := s.pool.Exec(ctx, `ALTER TABLE chain_blocks DROP CONSTRAINT force_reorg_failure`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Reorg(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
-	// The source rollback has committed. Force a later observation failure:
-	// a retry must reconcile it without any new blocks or partial versions.
+	// A failed observation update must now roll back the source change too.
 	if _, err := s.pool.Exec(ctx, `ALTER TABLE payments ADD CONSTRAINT force_orphan_failure CHECK(status<>'ORPHANED')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (chain.Scanner{Source: s.Store, Deposits: s.Store}).Scan(ctx); err == nil {
+	if _, err := s.Reorg(ctx, 1); err == nil {
 		t.Fatal("expected reconciliation SQL error")
 	}
 	var version int64
@@ -452,6 +448,9 @@ func TestChainScanAndReorgRollbackAtomically(t *testing.T) {
 		t.Fatal("partial reconciliation", version, count, err)
 	}
 	if _, err := s.pool.Exec(ctx, `ALTER TABLE payments DROP CONSTRAINT force_orphan_failure`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reorg(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
 	scanChain(t, s.Store)

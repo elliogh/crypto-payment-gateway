@@ -21,7 +21,7 @@ func serve(ctx context.Context, address string, handler http.Handler, logger *sl
 	}
 	failed := make(chan error, 1)
 	go func() { failed <- server.ListenAndServe() }()
-	logger.Info("API started", "address", address, "stage", 2)
+	logger.Info("API started", "address", address, "stage", 3)
 
 	select {
 	case err := <-failed:

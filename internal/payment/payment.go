@@ -6,6 +6,9 @@ type Status string
 const (
 	Confirming Status = "CONFIRMING"
 	Orphaned   Status = "ORPHANED"
+	AMLPending Status = "AML_PENDING"
+	Credited   Status = "CREDITED"
+	Rejected   Status = "REJECTED"
 )
 
 type Observation struct {

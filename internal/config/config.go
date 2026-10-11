@@ -6,20 +6,26 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"crypto-payment-gateway/internal/chain"
 	"crypto-payment-gateway/internal/partner"
 )
 
 type Config struct {
-	DatabaseURL      string
-	HTTPAddr         string
-	Confirmations    int
-	LocalMocks       bool
-	MockControlKey   string
-	AMLRetryInterval time.Duration
-	AlphaKey         string
-	BetaKey          string
+	DatabaseURL         string
+	HTTPAddr            string
+	Confirmations       int
+	LocalMocks          bool
+	MockControlKey      string
+	AMLRetryInterval    time.Duration
+	AMLBlacklist        []string
+	AMLUnavailable      bool
+	RefundsEnabled      bool
+	RefundUnsafeSenders []string
+	AlphaKey            string
+	BetaKey             string
 }
 
 func Load() (Config, error) {
@@ -40,8 +46,24 @@ func Load() (Config, error) {
 		return Config{}, errors.New("LOCAL_MOCKS must be boolean")
 	}
 	c.AMLRetryInterval, err = time.ParseDuration(value("AML_RETRY_INTERVAL", "5s"))
-	if err != nil || c.AMLRetryInterval <= 0 {
-		return Config{}, errors.New("AML_RETRY_INTERVAL must be positive duration")
+	if err != nil || c.AMLRetryInterval < time.Second {
+		return Config{}, errors.New("AML_RETRY_INTERVAL must be at least 1s")
+	}
+	c.AMLBlacklist, err = addressList("AML_BLACKLIST")
+	if err != nil {
+		return Config{}, err
+	}
+	c.RefundUnsafeSenders, err = addressList("REFUND_UNSAFE_SENDERS")
+	if err != nil {
+		return Config{}, err
+	}
+	c.AMLUnavailable, err = strconv.ParseBool(value("AML_UNAVAILABLE", "false"))
+	if err != nil {
+		return Config{}, errors.New("AML_UNAVAILABLE must be boolean")
+	}
+	c.RefundsEnabled, err = strconv.ParseBool(value("REFUNDS_ENABLED", "true"))
+	if err != nil {
+		return Config{}, errors.New("REFUNDS_ENABLED must be boolean")
 	}
 	c.DatabaseURL, err = databaseURL(c.DatabaseURL)
 	if err != nil {
@@ -87,4 +109,20 @@ func value(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func addressList(name string) ([]string, error) {
+	raw := os.Getenv(name)
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var addresses []string
+	for _, item := range strings.Split(raw, ",") {
+		address := strings.ToLower(strings.TrimSpace(item))
+		if !chain.ValidHex(address, 20) {
+			return nil, errors.New(name + " must contain comma-separated Ethereum addresses")
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses, nil
 }

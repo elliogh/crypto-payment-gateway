@@ -5,8 +5,8 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 ## Current State and Boundaries
 
 - Part 1 is complete: `DESIGN.md` and `output/pdf/usdt-payment-design.pdf`. Modify them when the task explicitly concerns the design.
-- Stages 1–2 of Part 2 are implemented: startup, PostgreSQL, the monetary model, ledger, partners, invoices, API, the Ethereum simulator, and the background scanner. AML workers, settlement, and refunds are not implemented yet; their schema and configuration are intentionally prepared in advance.
-- Start stages 3–4 when instructed by the user. Implement the assignment's simplified flow; the production architecture in the design does not require implementing every component. Outbox and webhooks are outside the current Part 2 flow.
+- Stages 1–3 of Part 2 are implemented: startup, PostgreSQL, money, ledger, partners/invoices/API, Ethereum simulator/scanner, AML worker, holds, settlement and refunds. Stage 4 is the final delivery audit.
+- Start stage 4 when instructed by the user. Implement the assignment's simplified flow; the production architecture in the design does not require implementing every component. Outbox and webhooks are outside the current Part 2 flow.
 
 ## Documents to Read
 
@@ -17,9 +17,9 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 
 ## Structure and Change Style
 
-- Domain rules belong in `partner`, `invoice`, `ledger`, and `money`; HTTP uses its own DTOs; the PostgreSQL adapter owns SQL and transactions. Startup and dependency wiring belong in `app`, with the entry point in `cmd/gateway`.
-- `chain` owns simulator/source interfaces, USDT event validation, and scanning; `payment` describes the current observation. Simulator commands change only blocks/events and the source cursor. The scanner owns invoice matching, persistent transfer bindings, and observation versions; it reconciles rollbacks even with no new blocks. GET confirmations also check block canonicality.
-- Lock `chain_state` first, then invoices and payments in UUID order, before ledger accounts. Read the head in a fresh statement after acquiring the chain lock. Apply batches only when both the chain version and starting cursor match; record payments and cursor atomically. Stage 3 must coordinate local reorg commands with financial decisions under these locks before enabling financial processing.
+- Domain rules belong in `partner`, `invoice`, `payment`, `refund`, `aml`, `ledger`, and `money`; HTTP uses its own DTOs; the PostgreSQL adapter owns SQL and transactions. Startup and dependency wiring belong in `app`, with the entry point in `cmd/gateway`.
+- `chain` owns simulator/source interfaces, USDT event validation, and scanning; `payment` describes the current observation. Source primitives change blocks/events and the cursor; the local Reorg command coordinates source rollback with holds, jobs and observation versions in one root LedgerTx. The scanner owns invoice matching, persistent transfer bindings, and observation versions; it reconciles rollbacks even with no new blocks. GET confirmations also check block canonicality.
+- Lock `chain_state` first, then invoices and payments in UUID order, before ledger accounts. Read the head in a fresh statement after acquiring the chain lock. Apply batches only when both the chain version and starting cursor match; record payments and cursor atomically. Reorg rejects removal of deposits with committed credit or refund decisions. AML completion rechecks the current observation, block canonicality, confirmations and job ownership under these locks.
 - Keep interfaces small and focused on complete operations. Prefer targeted changes; introduce a shared package or wrapper when it hides real rules or complexity rather than merely renaming a library.
 - Generate UUID v4 values with `github.com/google/uuid.NewRandom()` and handle errors. The custom `identity` package has been removed. HTTP accepts the standard 36-character UUID form in either case; the ledger requires canonical lowercase.
 - Errors preserve their causes for `errors.Is/As`. Diagnostics expose the operation, error type, and SQLSTATE; SQL error messages, parameters, keys, and connection URLs must stay out of logs and HTTP responses.
@@ -34,6 +34,8 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 - Posting requires `READ COMMITTED`: lock accounts in UUID order, then read balances in a separate query after acquiring the locks. Validate the result of the entire operation rather than the intermediate balance after an individual entry.
 - An operation contains at least two positive entries with equal debit and credit totals. Each affected account's balance on its normal side must remain within `0..MaxInt64`. Failure of one operation must not stop processing the others.
 - The business key prevents duplicates: the same fingerprint returns the existing operation; different content produces a conflict. Existing journal records and accounts' financial attributes are not rewritten; corrections use new operations.
+- AML calls run outside SQL transactions. Job claims use SKIP LOCKED and a lease/version; stale or expired owners cannot apply results. Hold/cancel keys include payment ID and observation version; the final credit key uses payment ID alone. Provider or balance failures keep the hold with a bounded retry and a safe error code, allowing other jobs to proceed.
+- Refund READY means an outstanding obligation, not an asset withdrawal. Unsafe local return routes or missing automatic authorization produce HELD. Explicit local approval supplies a confirmed recipient and changes only the refund route/status, with no new postings.
 - The fingerprint format is a persisted contract. Preserve canonicalization, fixed encoding, and the golden test with UUIDs when changing models or DTOs.
 
 ## Migrations and Data
@@ -41,6 +43,7 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 - Goose SQL files live in the root `migrations/` directory, are embedded in the binary, and are applied before the API starts. The current history consists of 001–003; add new migrations for future changes.
 - Custom triggers, trigger functions, and `sealed` have been removed. Go enforces financial rules; the database retains PK, FK, UNIQUE, NOT NULL, and CHECK constraints. Direct administrative SQL can bypass Go rules; this is an accepted limitation, and no additional database roles have been introduced.
 - Preserve the Docker volume and existing data during normal updates. A previously approved cleanup of the demo database does not authorize another reset.
+- Seed rotates demo partners' keys atomically, including swaps. Serialize initialization before freeing existing hashes; preserve partner settings and financial data, and roll back both key changes on a conflict with another partner.
 
 ## Validating Changes
 
@@ -59,10 +62,6 @@ The URL above uses the demo Compose settings; use the actual connection details 
 - For migration changes, check `Up` on a clean database, concurrent `Up`, repeated application, `Down`, and rollback of a failing migration.
 - When changing startup or Docker, build the image and check the API, repeated invoice creation, and data preservation after updating the container. UUID or DTO changes must preserve the HTTP contract and fingerprint.
 - After checks pass, repeat them when new changes or a discovered issue require further validation. Documentation-only changes do not require Go tests.
-
-## Open Finding from the Latest Review
-
-`internal/postgres/seed.go`: swapping the API keys of alpha and beta in an existing database passes validation, but sequential UPDATE statements violate UNIQUE `api_key_hash` and stop startup with SQLSTATE `23505`. The transaction preserves the previous data. This finding is still unresolved: when working on initialization, define the key reassignment policy and verify it with an integration test. Remove this item after fixing it.
 
 ## Git and Task Scope
 

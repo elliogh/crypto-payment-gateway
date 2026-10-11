@@ -13,7 +13,7 @@ import (
 var _ chain.Deposits = (*Store)(nil)
 
 func (s *Store) ApplyScan(ctx context.Context, batch chain.Batch, candidates []chain.Candidate) error {
-	tx, _, err := s.beginChainChange(ctx)
+	tx, _, err := s.beginLedgerChain(ctx)
 	if err != nil {
 		return err
 	}
@@ -31,7 +31,7 @@ func (s *Store) ApplyScan(ctx context.Context, batch chain.Batch, candidates []c
 	for _, c := range candidates {
 		recipients = append(recipients, c.Event.Recipient)
 	}
-	rows, err := tx.Query(ctx, `SELECT id::text,deposit_address FROM invoices
+	rows, err := tx.tx.Query(ctx, `SELECT id::text,deposit_address FROM invoices
 		WHERE deposit_address=ANY($1::text[]) OR id IN (
 			SELECT p.invoice_id FROM payments p
 			JOIN payment_observations o ON o.payment_id=p.id AND o.version=p.observation_version
@@ -57,11 +57,11 @@ func (s *Store) ApplyScan(ctx context.Context, batch chain.Batch, candidates []c
 	if err != nil {
 		return err
 	}
-	if err = lockDepositRows(ctx, tx, invoiceIDs); err != nil {
+	if err = lockDepositRows(ctx, tx.tx, invoiceIDs); err != nil {
 		return err
 	}
 	// Reconcile removed observations even if no replacement blocks exist yet.
-	if err = orphanDeposits(ctx, tx); err != nil {
+	if err = s.orphanDeposits(ctx, tx); err != nil {
 		return err
 	}
 	for _, c := range candidates {
@@ -69,7 +69,7 @@ func (s *Store) ApplyScan(ctx context.Context, batch chain.Batch, candidates []c
 		if !ok {
 			continue
 		}
-		if err = recordDeposit(ctx, tx, id, c); err != nil {
+		if err = recordDeposit(ctx, tx.tx, id, c); err != nil {
 			return fmt.Errorf("record deposit: %w", err)
 		}
 	}
@@ -80,32 +80,6 @@ func (s *Store) ApplyScan(ctx context.Context, batch chain.Batch, candidates []c
 		}
 	}
 	return tx.Commit(ctx)
-}
-
-// Stage 2 has no financial states. Stage 3 must add hold/job cancellation here
-// and coordinate final financial decisions with the local reorg command.
-func orphanDeposits(ctx context.Context, tx pgx.Tx) error {
-	const removed = `FROM payments p
-		JOIN payment_observations o ON o.payment_id=p.id AND o.version=p.observation_version
-		JOIN chain_blocks b ON b.hash=o.block_hash WHERE o.canonical AND NOT b.canonical`
-	var unsupported bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 `+removed+` AND p.status<>'CONFIRMING')`).Scan(&unsupported); err != nil {
-		return err
-	}
-	if unsupported {
-		return chain.ErrConflict
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO payment_observations(payment_id,version,block_hash,log_index,canonical)
-		SELECT p.id,p.observation_version+1,o.block_hash,o.log_index,false `+removed); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE payments SET status='ORPHANED',observation_version=observation_version+1
-		WHERE id IN (SELECT p.id `+removed+`)`); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE payment_observations SET canonical=false
-		WHERE canonical AND block_hash IN (SELECT hash FROM chain_blocks WHERE NOT canonical)`)
-	return err
 }
 
 func recordDeposit(ctx context.Context, tx pgx.Tx, invoiceID string, c chain.Candidate) error {
@@ -159,8 +133,7 @@ func recordDeposit(ctx context.Context, tx pgx.Tx, invoiceID string, c chain.Can
 	return err
 }
 
-// lockDepositRows locks business rows after chain_state; never called by the simulator.
-// Future AML transactions must acquire these locks before ledger account locks.
+// lockDepositRows locks business rows after chain_state and before ledger accounts.
 func lockDepositRows(ctx context.Context, tx pgx.Tx, invoiceIDs []string) error {
 	for _, query := range []string{
 		`SELECT id FROM invoices WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`,

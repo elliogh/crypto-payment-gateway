@@ -7,6 +7,7 @@ import (
 
 	"crypto-payment-gateway/internal/ledger"
 	"crypto-payment-gateway/internal/partner"
+	"github.com/google/uuid"
 )
 
 const (
@@ -38,6 +39,22 @@ func (s *Store) Seed(ctx context.Context, alphaKey, betaKey string) error {
 		return fmt.Errorf("begin partner initialization: %w", err)
 	}
 	defer tx.Rollback(context.Background())
+	// Serialize initialization, including the first startup when no rows exist.
+	// Readers keep seeing the old committed keys until the complete rotation commits.
+	if _, err := tx.Exec(ctx, `LOCK TABLE partners IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return fmt.Errorf("lock partner initialization: %w", err)
+	}
+	// Free both old hashes before assigning either new hash: this permits swaps
+	// with the existing immediate UNIQUE constraint, without changing migrations.
+	for _, demo := range demoPartners {
+		placeholder, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("generate temporary partner key: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE partners SET api_key_hash=$2 WHERE id=$1`, demo.id, keyHash(placeholder.String())); err != nil {
+			return fmt.Errorf("prepare partner key rotation: %w", err)
+		}
+	}
 	for _, demo := range demoPartners {
 		if _, err := tx.Exec(ctx, query, demo.id, demo.name, keyHash(demo.key), demo.feeBPS); err != nil {
 			return fmt.Errorf("initialize demo partner: %w", err)

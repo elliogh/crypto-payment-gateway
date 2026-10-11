@@ -38,27 +38,33 @@ func (s *Store) InitializeChain(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-// Every chain mutation locks chain_state first. The shared order for stage 3 is:
+// Every source/financial mutation locks chain_state first. The shared order is:
 // chain_state -> invoices ordered by UUID -> payments ordered by UUID -> ledger accounts.
 func (s *Store) beginChainChange(ctx context.Context) (pgx.Tx, chain.Block, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, chain.Block{}, err
 	}
-	var head chain.Block
-	// Read the head in a fresh statement after waiting for the state lock.
-	// A joined locking SELECT could retain the previous head's snapshot.
-	var headHash string
-	err = tx.QueryRow(ctx, `SELECT head_hash FROM chain_state WHERE chain_id=1 FOR UPDATE`).Scan(&headHash)
-	if err == nil {
-		err = tx.QueryRow(ctx, `SELECT hash,height,coalesce(parent_hash,''),timestamp FROM chain_blocks WHERE hash=$1`, headHash).
-			Scan(&head.Hash, &head.Height, &head.ParentHash, &head.Timestamp)
-	}
+	head, err := lockChain(ctx, tx)
 	if err != nil {
 		_ = tx.Rollback(context.Background())
 		return nil, chain.Block{}, err
 	}
 	return tx, head, nil
+}
+
+// Use a fresh statement for head data after waiting for the state lock.
+func lockChain(ctx context.Context, tx pgx.Tx) (chain.Block, error) {
+	var head chain.Block
+	// Read the head in a fresh statement after waiting for the state lock.
+	// A joined locking SELECT could retain the previous head's snapshot.
+	var headHash string
+	err := tx.QueryRow(ctx, `SELECT head_hash FROM chain_state WHERE chain_id=1 FOR UPDATE`).Scan(&headHash)
+	if err == nil {
+		err = tx.QueryRow(ctx, `SELECT hash,height,coalesce(parent_hash,''),timestamp FROM chain_blocks WHERE hash=$1`, headHash).
+			Scan(&head.Hash, &head.Height, &head.ParentHash, &head.Timestamp)
+	}
+	return head, err
 }
 
 func appendBlock(ctx context.Context, tx pgx.Tx, parent chain.Block) (chain.Block, error) {
@@ -165,38 +171,20 @@ func (s *Store) Advance(ctx context.Context, count int) (chain.Block, error) {
 	return head, tx.Commit(ctx)
 }
 
-// Reorg rolls back the tip; replacement blocks are added by AddTransfer/Advance.
-// Only the source state changes here. The scanner reconciles payment observations.
-func (s *Store) Reorg(ctx context.Context, depth int) (chain.Block, error) {
-	if depth < 1 || depth > chain.MaxBlocks {
-		return chain.Block{}, chain.ErrInvalid
-	}
-	tx, head, err := s.beginChainChange(ctx)
-	if err != nil {
-		return chain.Block{}, err
-	}
-	defer tx.Rollback(context.Background())
-	if int64(depth) > head.Height {
-		return chain.Block{}, chain.ErrInvalid
-	}
-	var ancestor chain.Block
-	err = tx.QueryRow(ctx, `SELECT hash,height,coalesce(parent_hash,''),timestamp FROM chain_blocks WHERE canonical AND height=$1`, head.Height-int64(depth)).
-		Scan(&ancestor.Hash, &ancestor.Height, &ancestor.ParentHash, &ancestor.Timestamp)
-	if err != nil {
-		return chain.Block{}, err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE chain_blocks SET canonical=false WHERE canonical AND height>$1`, ancestor.Height); err != nil {
-		return chain.Block{}, err
+// rollbackChain changes source data only; the caller owns the chain lock/transaction.
+func rollbackChain(ctx context.Context, tx pgx.Tx, ancestor chain.Block) error {
+	if _, err := tx.Exec(ctx, `UPDATE chain_blocks SET canonical=false WHERE canonical AND height>$1`, ancestor.Height); err != nil {
+		return err
 	}
 	// If the cursor lies in the removed suffix, rewind it in the same transaction.
-	if _, err = tx.Exec(ctx, `UPDATE chain_state SET scan_hash=$1 WHERE chain_id=1 AND scan_hash IN
+	if _, err := tx.Exec(ctx, `UPDATE chain_state SET scan_hash=$1 WHERE chain_id=1 AND scan_hash IN
 		(SELECT hash FROM chain_blocks WHERE height>$2)`, ancestor.Hash, ancestor.Height); err != nil {
-		return chain.Block{}, err
+		return err
 	}
-	if err = updateHead(ctx, tx, ancestor); err != nil {
-		return chain.Block{}, err
+	if err := updateHead(ctx, tx, ancestor); err != nil {
+		return err
 	}
-	return ancestor, tx.Commit(ctx)
+	return nil
 }
 
 func (s *Store) ReadBatch(ctx context.Context) (chain.Batch, error) {

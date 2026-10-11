@@ -87,7 +87,7 @@ func TestHTTPStageTwoScenarioAndAccessControl(t *testing.T) {
 	if w := request("POST", "/mock/reorg", "local-control-key", `{"depth":3}`); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	check("CONFIRMING", 0, false)
+	check("ORPHANED", 0, false)
 	scanChain(t, s.Store)
 	check("ORPHANED", 0, false)
 	if w := request("POST", "/mock/transfers", "local-control-key", body); w.Code != 201 {

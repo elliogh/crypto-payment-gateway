@@ -10,6 +10,8 @@ import (
 
 	"crypto-payment-gateway/internal/invoice"
 	"crypto-payment-gateway/internal/money"
+	"crypto-payment-gateway/internal/payment"
+	"crypto-payment-gateway/internal/refund"
 	"github.com/google/uuid"
 )
 
@@ -31,6 +33,20 @@ type invoiceResponse struct {
 	RefundStatus   *string          `json:"refund_status"`
 	CreatedAt      time.Time        `json:"created_at"`
 	Payment        *paymentResponse `json:"payment,omitempty"`
+	Refund         *refundResponse  `json:"refund,omitempty"`
+}
+
+type refundResponse struct {
+	ID        string    `json:"id"`
+	Amount    string    `json:"amount"`
+	Recipient string    `json:"recipient"`
+	Status    string    `json:"status"`
+	Reason    string    `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func toRefundResponse(r refund.Refund) refundResponse {
+	return refundResponse{ID: r.ID, Amount: r.Amount.String(), Recipient: r.Recipient, Status: string(r.Status), Reason: r.Reason, CreatedAt: r.CreatedAt}
 }
 
 type paymentResponse struct {
@@ -117,8 +133,14 @@ func (a *api) getInvoice(w http.ResponseWriter, r *http.Request) {
 		response.PaymentStatus = &status
 		response.Payment = &paymentResponse{
 			ID: found.Payment.ID, ObservationVersion: found.Payment.Version, Confirmations: found.Payment.Confirmations,
-			ReadyForAML: a.Confirmations > 0 && found.Payment.Confirmations >= int64(a.Confirmations) && status == "CONFIRMING",
+			ReadyForAML: a.Confirmations > 0 && found.Payment.Confirmations >= int64(a.Confirmations) && found.Payment.Status == payment.Confirming,
 		}
+	}
+	if found.Refund != nil {
+		status := string(found.Refund.Status)
+		response.RefundStatus = &status
+		value := toRefundResponse(*found.Refund)
+		response.Refund = &value
 	}
 	reply(w, http.StatusOK, response)
 }
