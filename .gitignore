@@ -1,0 +1,32 @@
+# Локальное условие и планы работы
+/TASK.md
+/plans/
+
+# IDE и ОС
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Локальные настройки и секреты
+.env
+.env.*
+!.env.example
+
+# Сборка, тесты и профилирование
+/bin/
+/build/
+/dist/
+/tmp/
+/coverage/
+coverage.out
+coverage.html
+*.test
+*.prof
+*.log
+
+# Временные артефакты документа; итоговый PDF входит в сдачу
+/output/*
+!/output/pdf/
+/output/pdf/*
+!/output/pdf/usdt-payment-design.pdf

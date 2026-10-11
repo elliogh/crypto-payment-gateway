@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-password}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-54329}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  gateway:
+    build: .
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: gateway
+      PGPASSWORD: ${POSTGRES_PASSWORD:-local-demo-password}
+      PGDATABASE: gateway
+      PGSSLMODE: disable
+      HTTP_ADDR: :8080
+      CONFIRMATIONS: ${CONFIRMATIONS:-3}
+      LOCAL_MOCKS: ${LOCAL_MOCKS:-true}
+      MOCK_CONTROL_KEY: ${MOCK_CONTROL_KEY:-local-control-key}
+      AML_RETRY_INTERVAL: ${AML_RETRY_INTERVAL:-5s}
+      PARTNER_ALPHA_KEY: ${PARTNER_ALPHA_KEY:-local-alpha-key}
+      PARTNER_BETA_KEY: ${PARTNER_BETA_KEY:-local-beta-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  postgres_data:

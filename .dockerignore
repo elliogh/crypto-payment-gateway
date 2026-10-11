@@ -1,0 +1,11 @@
+.git
+.idea
+.vscode
+.env
+.env.*
+plans
+TASK.md
+output
+bin
+coverage*
+*.log
