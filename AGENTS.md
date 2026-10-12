@@ -5,8 +5,8 @@ This is a Senior Backend Engineer (Go) take-home assignment: design a USDT payme
 ## Current State and Boundaries
 
 - Part 1 is complete: `DESIGN.md` and `output/pdf/usdt-payment-design.pdf`. Modify them when the task explicitly concerns the design.
-- Stages 1–3 of Part 2 are implemented: startup, PostgreSQL, money, ledger, partners/invoices/API, Ethereum simulator/scanner, AML worker, holds, settlement and refunds. Stage 4 is the final delivery audit.
-- Start stage 4 when instructed by the user. Implement the assignment's simplified flow; the production architecture in the design does not require implementing every component. Outbox and webhooks are outside the current Part 2 flow.
+- Part 2 is implemented and stages 1–4 are complete: API, PostgreSQL, money/ledger, simulator/scanner, AML processing, settlement/refunds, and the final delivery audit. Clean Docker startup, README scenarios and real-process crash recovery have been verified.
+- Keep changes within the assignment's simplified flow unless the user requests an extension. The production architecture in the design does not require implementing every component; outbox and webhooks are outside the current Part 2 flow.
 
 ## Documents to Read
 
